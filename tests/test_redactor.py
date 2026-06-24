@@ -300,3 +300,19 @@ class TestRedactsIdentity:
         assert redact_path_token("home-nikolaskuhn-code", usernames=())[0] == "home-[USER]-code"
         assert redact_path_token("-home-ubuntu-proj", usernames=())[0] == "-home-ubuntu-proj"
         assert redact_path_token("/home/jo/proj", usernames=())[0] == "/home/[USER]/proj"
+
+    def test_decorator_in_diff_preserved(self):
+        # Over-eager fix: @app.get/@app.post in diff/code lines are not emails.
+        from claude_transcript_collector.redactor import redact_identity
+        out, _ = redact_identity("-@app.get and +@app.post and x\\n@app.route", usernames=())
+        assert "@app.get" in out and "@app.post" in out and "@app.route" in out
+        assert "[EMAIL]" not in out
+
+    def test_real_email_plus_localpart_still_redacted(self):
+        from claude_transcript_collector.redactor import redact_identity
+        out, _ = redact_identity("from 97564335+metatrot@users.noreply.github.com", usernames=())
+        assert "metatrot" not in out and "[EMAIL]" in out
+
+    def test_guest_is_default_username(self):
+        from claude_transcript_collector.redactor import redact_path_token
+        assert redact_path_token("/home/guest/x", usernames=())[0] == "/home/guest/x"

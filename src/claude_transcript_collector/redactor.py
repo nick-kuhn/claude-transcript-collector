@@ -27,19 +27,23 @@ MIN_USERNAME_LEN = 4
 _BASE_DEFAULT_USERS = {
     "ubuntu", "ec2-user", "admin", "administrator", "root", "user", "users",
     "shared", "dev", "node", "app", "runner", "vagrant", "pi", "centos",
-    "debian", "fedora", "azureuser", "cloud-user", "opc", "git",
+    "debian", "fedora", "azureuser", "cloud-user", "opc", "git", "guest",
 }
 
 _HOMEPATH_RE = re.compile(r"(/(?:home|Users)/)([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 # Emails: fail safe — redact any plausible address (alphabetic TLD) rather than
-# allowlisting TLDs (which silently leaks uncommon ccTLDs like .it/.es). Two
-# guards keep code/hosts intact: a `(?<!\\)` lookbehind drops escaped-newline
-# matches, i.e. Python decorators that appear as `\n@module.attr` in JSONL
-# (their only local part is the `n` of `\n`), and a small denylist excludes
-# internal-host pseudo-TLDs (...ec2.internal).
+# allowlisting TLDs (which silently leaks uncommon ccTLDs like .it/.es). Guards
+# keep code/hosts intact:
+#  - the local part must START with an alphanumeric and be preceded by a real
+#    boundary (not + - . \ @ or another local-part char). This drops web-framework
+#    decorators written in diffs/code — `+@app.post`, `-@app.get`, `\n@app.route`
+#    — whose "local part" is only the diff marker or escaped-newline char.
+#  - a small denylist excludes internal-host pseudo-TLDs (...ec2.internal).
 _EMAIL_NON_TLDS = {"internal", "local", "localdomain", "lan", "arpa"}
-_EMAIL_RE = re.compile(r"(?<!\\)[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.([A-Za-z]{2,24})")
+_EMAIL_RE = re.compile(
+    r"(?<![A-Za-z0-9._%+\-\\@])[A-Za-z0-9][A-Za-z0-9._%+\-]*@[A-Za-z0-9.\-]+\.([A-Za-z]{2,24})"
+)
 
 PATTERNS: list[tuple[str, re.Pattern]] = [
     # AWS access key IDs (always start with AKIA/ASIA)
