@@ -257,3 +257,46 @@ class TestRedactsIdentity:
         out, n = redactor.redact_identity("/home/buildbot/x", usernames=())
         assert "/home/buildbot/x" in out
         assert n == 0
+
+    def test_uncommon_cctld_email_redacted(self):
+        # Finding 2: fail safe — uncommon ccTLDs must not leak.
+        from claude_transcript_collector.redactor import redact_identity
+        out, n = redact_identity("ping colleague@firma.it now", usernames=())
+        assert "colleague@firma.it" not in out
+        assert "[EMAIL]" in out
+
+    def test_decorator_at_escaped_newline_preserved(self):
+        # Finding 2: `\n@module.attr` decorators in JSONL stay intact.
+        from claude_transcript_collector.redactor import redact_identity
+        out, _ = redact_identity("code\\n@dataclasses.dataclass and a@b.io", usernames=())
+        assert "@dataclasses.dataclass" in out
+        assert "a@b.io" not in out and "[EMAIL]" in out
+
+    def test_internal_host_not_treated_as_email(self):
+        from claude_transcript_collector.redactor import redact_identity
+        out, _ = redact_identity("svc@ip-10-0-0-1.ec2.internal", usernames=())
+        assert "ec2.internal" in out  # host-suffix denylist -> left alone
+
+    def test_email_before_bare_token_ordering(self):
+        # Finding 3: address whose local part is the username -> [EMAIL], not [USER]@...
+        from claude_transcript_collector.redactor import redact_identity
+        out, _ = redact_identity("reach nikolaskuhn@gmx.de", usernames=("nikolaskuhn",))
+        assert "[EMAIL]" in out
+        assert "[USER]@" not in out
+        assert "gmx.de" not in out
+
+    def test_path_fields_redacted_encoded_and_decoded(self):
+        # Finding 1: the encoded group_key and decoded group_label both scrub.
+        from claude_transcript_collector.redactor import redact_identity
+        enc, _ = redact_identity("-home-nikolaskuhn-code", usernames=("nikolaskuhn",))
+        assert "nikolaskuhn" not in enc and "[USER]" in enc
+        dec, _ = redact_identity("/home/nikolaskuhn/code", usernames=())
+        assert dec == "/home/[USER]/code"
+
+    def test_encoded_path_key_redacted_any_username(self):
+        # Finding 1: dash-encoded project keys scrub regardless of bare-token min length.
+        from claude_transcript_collector.redactor import redact_path_token
+        assert redact_path_token("-home-jo-proj", usernames=())[0] == "-home-[USER]-proj"
+        assert redact_path_token("home-nikolaskuhn-code", usernames=())[0] == "home-[USER]-code"
+        assert redact_path_token("-home-ubuntu-proj", usernames=())[0] == "-home-ubuntu-proj"
+        assert redact_path_token("/home/jo/proj", usernames=())[0] == "/home/[USER]/proj"

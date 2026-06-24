@@ -24,7 +24,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from jinja2 import Environment, PackageLoader
 
-from .redactor import redact_identity, redact_jsonl_content
+from .redactor import redact_identity, redact_jsonl_content, redact_path_token
 from .sources import SOURCES, detect_all, find_session, get_source
 
 S3_BUCKET = os.environ.get("CTC_S3_BUCKET", "rr-agent-transcripts")
@@ -124,15 +124,23 @@ def _zip_and_upload(s3, source, sessions, contributor, redact_secrets, redact_id
             if redact_secrets:
                 raw, n = redact_jsonl_content(raw)
                 redaction_count += n
+            # Identity redaction must also cover the archive path and the manifest
+            # group fields, which encode the home path / username (e.g.
+            # -home-<user>-code, /home/<user>/code) and would otherwise leak.
+            group_key, group_label = sess.group_key, sess.group_label
             if redact_id:
                 raw, n = redact_identity(raw)
                 redaction_count += n
+                group_key, n = redact_path_token(group_key)
+                redaction_count += n
+                group_label, n = redact_path_token(group_label)
+                redaction_count += n
             total_redactions += redaction_count
 
-            zf.writestr(f"{sess.group_key}/{sess.id}.jsonl", raw)
+            zf.writestr(f"{group_key}/{sess.id}.jsonl", raw)
             manifest_sessions.append({
-                "group": sess.group_key,
-                "group_label": sess.group_label,
+                "group": group_key,
+                "group_label": group_label,
                 "session": sess.id,
                 "size_bytes": len(raw.encode("utf-8")),
                 "redactions": redaction_count,

@@ -32,14 +32,14 @@ _BASE_DEFAULT_USERS = {
 
 _HOMEPATH_RE = re.compile(r"(/(?:home|Users)/)([A-Za-z0-9][A-Za-z0-9._-]*)")
 
-# Emails gated on a real public-TLD allowlist so code (e.g. @dataclasses.dataclass,
-# @app.function) and hostnames (...ec2.internal) are not falsely redacted.
-_EMAIL_TLDS = {
-    "com", "org", "net", "edu", "gov", "mil", "io", "ai", "co", "dev", "app",
-    "me", "info", "biz", "uk", "de", "fr", "jp", "cn", "ca", "au", "eu", "us",
-    "xyz", "tech", "cloud",
-}
-_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.([A-Za-z]{2,24})")
+# Emails: fail safe — redact any plausible address (alphabetic TLD) rather than
+# allowlisting TLDs (which silently leaks uncommon ccTLDs like .it/.es). Two
+# guards keep code/hosts intact: a `(?<!\\)` lookbehind drops escaped-newline
+# matches, i.e. Python decorators that appear as `\n@module.attr` in JSONL
+# (their only local part is the `n` of `\n`), and a small denylist excludes
+# internal-host pseudo-TLDs (...ec2.internal).
+_EMAIL_NON_TLDS = {"internal", "local", "localdomain", "lan", "arpa"}
+_EMAIL_RE = re.compile(r"(?<!\\)[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.([A-Za-z]{2,24})")
 
 PATTERNS: list[tuple[str, re.Pattern]] = [
     # AWS access key IDs (always start with AKIA/ASIA)
@@ -185,7 +185,11 @@ def redact_identity(text: str, usernames: tuple[str, ...] | None = None) -> tupl
       logins (ubuntu, admin, ...), which are left untouched.
     - The machine's own non-default usernames are redacted as bare tokens too,
       so they don't leak outside paths.
-    - Email addresses with a real TLD -> [EMAIL].
+    - Email addresses -> [EMAIL].
+
+    Emails are redacted before the bare-token pass so that an address whose local
+    part is the local username (e.g. nick@host.com) becomes [EMAIL] rather than
+    being fragmented into [USER]@host.com.
 
     Returns (redacted_text, count).
     """
@@ -202,16 +206,45 @@ def redact_identity(text: str, usernames: tuple[str, ...] | None = None) -> tupl
 
     text = _HOMEPATH_RE.sub(_home, text)
 
+    def _email(m):
+        if m.group(1).lower() in _EMAIL_NON_TLDS:
+            return m.group(0)
+        counts["n"] += 1
+        return EMAIL_PLACEHOLDER
+
+    text = _EMAIL_RE.sub(_email, text)
+
     for name in usernames:
         pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])")
         text, c = pat.subn(USERNAME_PLACEHOLDER, text)
         counts["n"] += c
-
-    def _email(m):
-        if m.group(1).lower() in _EMAIL_TLDS:
-            counts["n"] += 1
-            return EMAIL_PLACEHOLDER
-        return m.group(0)
-
-    text = _EMAIL_RE.sub(_email, text)
     return text, counts["n"]
+
+
+# Dash-encoded home paths used as project keys: `-home-<user>-...` (Claude) and
+# `home-<user>-...` (Codex/Pi). Applied only to archive paths / manifest group
+# fields, where the context is unambiguously a path — so no min-length guard,
+# unlike bare-token redaction in free content.
+_HOMEPATH_ENCODED_RE = re.compile(r"(^|-)(home|Users)-([^-]+)")
+
+
+def redact_path_token(token: str, usernames: tuple[str, ...] | None = None) -> tuple[str, int]:
+    """Redact usernames from an archive path / manifest group field.
+
+    Covers the decoded slash form (/home/<u>/) via redact_identity AND the
+    dash-encoded project-key form (-home-<u>-, home-<u>-), which the slash regex
+    can't see. Default logins are still preserved.
+    """
+    token, n = redact_identity(token, usernames=usernames)
+    defaults = default_usernames()
+    counts = {"n": 0}
+
+    def _enc(m):
+        seg = m.group(3)
+        if seg == USERNAME_PLACEHOLDER or seg.lower() in defaults:
+            return m.group(0)
+        counts["n"] += 1
+        return f"{m.group(1)}{m.group(2)}-{USERNAME_PLACEHOLDER}"
+
+    token = _HOMEPATH_ENCODED_RE.sub(_enc, token)
+    return token, n + counts["n"]
