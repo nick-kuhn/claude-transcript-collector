@@ -193,19 +193,24 @@ async def upload(request: Request):
     if not to_upload:
         return JSONResponse({"error": "No matching sessions found"}, status_code=400)
 
+    # Upload per source so one source's failure doesn't discard the others'
+    # already-built uploads (mirrors headless_upload's per-source handling).
     s3 = _make_s3_client()
     uploads = []
-    try:
-        for source, sessions in to_upload:
+    errors = []
+    for source, sessions in to_upload:
+        try:
             uploads.append(_zip_and_upload(s3, source, sessions, contributor, redact_secrets))
-    except Exception as e:
-        return JSONResponse(
-            {"error": f"Upload failed: {type(e).__name__}: {e}"}, status_code=502
-        )
+        except Exception as e:
+            errors.append({"source": source.id, "error": f"{type(e).__name__}: {e}"})
+
+    if not uploads:
+        return JSONResponse({"error": "Upload failed", "errors": errors}, status_code=502)
 
     return {
-        "status": "uploaded",
+        "status": "uploaded" if not errors else "partial",
         "uploads": uploads,
+        "errors": errors,
         "session_count": sum(u["session_count"] for u in uploads),
         "zip_size_bytes": sum(u["zip_size_bytes"] for u in uploads),
         "total_redactions": sum(u["total_redactions"] for u in uploads),

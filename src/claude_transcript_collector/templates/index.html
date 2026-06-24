@@ -367,7 +367,10 @@ async function uploadSelected() {
     const data = await resp.json();
     if (resp.ok) {
       const zips = data.uploads.length;
-      showToast(`Uploaded ${data.session_count} sessions in ${zips} zip${zips !== 1 ? 's' : ''} (${humanSize(data.zip_size_bytes)}, ${data.total_redactions} redactions)`);
+      const failed = (data.errors || []).length;
+      let msg = `Uploaded ${data.session_count} sessions in ${zips} zip${zips !== 1 ? 's' : ''} (${humanSize(data.zip_size_bytes)}, ${data.total_redactions} redactions)`;
+      if (failed) msg += ` — ${failed} source${failed !== 1 ? 's' : ''} failed`;
+      showToast(msg, failed > 0);
       deselectAll();
     } else {
       showToast(data.error || 'Upload failed', true);
