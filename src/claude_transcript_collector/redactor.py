@@ -6,9 +6,40 @@ Design principles:
   accidentally nuke normal prose, hex colors, base64 snippets in code, etc.
 """
 
+import functools
+import getpass
+import os
 import re
+import subprocess
+from pathlib import Path
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
+USERNAME_PLACEHOLDER = "[USER]"
+EMAIL_PLACEHOLDER = "[EMAIL]"
+
+# Bare-token username redaction only applies to names at least this long, so a
+# short/common login can't nuke unrelated words. Path redaction is anchored and
+# not subject to this.
+MIN_USERNAME_LEN = 4
+
+# System/cloud default logins we never redact, in paths or as tokens — there's no
+# personal info in "ubuntu". Extend at runtime via CTC_USERNAME_STOPLIST.
+_BASE_DEFAULT_USERS = {
+    "ubuntu", "ec2-user", "admin", "administrator", "root", "user", "users",
+    "shared", "dev", "node", "app", "runner", "vagrant", "pi", "centos",
+    "debian", "fedora", "azureuser", "cloud-user", "opc", "git",
+}
+
+_HOMEPATH_RE = re.compile(r"(/(?:home|Users)/)([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+# Emails gated on a real public-TLD allowlist so code (e.g. @dataclasses.dataclass,
+# @app.function) and hostnames (...ec2.internal) are not falsely redacted.
+_EMAIL_TLDS = {
+    "com", "org", "net", "edu", "gov", "mil", "io", "ai", "co", "dev", "app",
+    "me", "info", "biz", "uk", "de", "fr", "jp", "cn", "ca", "au", "eu", "us",
+    "xyz", "tech", "cloud",
+}
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.([A-Za-z]{2,24})")
 
 PATTERNS: list[tuple[str, re.Pattern]] = [
     # AWS access key IDs (always start with AKIA/ASIA)
@@ -108,3 +139,79 @@ def redact_jsonl_content(raw_jsonl: str) -> tuple[str, int]:
     """
     redacted_text, records = redact(raw_jsonl)
     return redacted_text, len(records)
+
+
+def default_usernames() -> set[str]:
+    """System/default logins that are never redacted (stoplist, env-extendable)."""
+    extra = os.environ.get("CTC_USERNAME_STOPLIST", "")
+    return _BASE_DEFAULT_USERS | {u.strip().lower() for u in extra.split(",") if u.strip()}
+
+
+@functools.lru_cache(maxsize=1)
+def local_usernames() -> tuple[str, ...]:
+    """The machine's own identity tokens worth redacting (computed once).
+
+    Gathers the home-dir name, the login name, and git user.name; drops any that
+    are default/system logins or shorter than MIN_USERNAME_LEN. Longest first so
+    overlapping names redact greedily.
+    """
+    names = set()
+    try:
+        names.add(Path.home().name)
+    except Exception:
+        pass
+    try:
+        names.add(getpass.getuser())
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(
+            ["git", "config", "--get", "user.name"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            names.add(out.stdout.strip())
+    except Exception:
+        pass
+    defaults = default_usernames()
+    keep = {n for n in names if n and len(n) >= MIN_USERNAME_LEN and n.lower() not in defaults}
+    return tuple(sorted(keep, key=len, reverse=True))
+
+
+def redact_identity(text: str, usernames: tuple[str, ...] | None = None) -> tuple[str, int]:
+    """Redact home-path usernames, the local identity, and emails.
+
+    - Home paths: /home/<u>/ and /Users/<u>/ -> /home/[USER]/, EXCEPT default
+      logins (ubuntu, admin, ...), which are left untouched.
+    - The machine's own non-default usernames are redacted as bare tokens too,
+      so they don't leak outside paths.
+    - Email addresses with a real TLD -> [EMAIL].
+
+    Returns (redacted_text, count).
+    """
+    if usernames is None:
+        usernames = local_usernames()
+    defaults = default_usernames()
+    counts = {"n": 0}
+
+    def _home(m):
+        if m.group(2).lower() in defaults:
+            return m.group(0)
+        counts["n"] += 1
+        return m.group(1) + USERNAME_PLACEHOLDER
+
+    text = _HOMEPATH_RE.sub(_home, text)
+
+    for name in usernames:
+        pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])")
+        text, c = pat.subn(USERNAME_PLACEHOLDER, text)
+        counts["n"] += c
+
+    def _email(m):
+        if m.group(1).lower() in _EMAIL_TLDS:
+            counts["n"] += 1
+            return EMAIL_PLACEHOLDER
+        return m.group(0)
+
+    text = _EMAIL_RE.sub(_email, text)
+    return text, counts["n"]

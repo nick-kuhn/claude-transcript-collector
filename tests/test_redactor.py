@@ -221,3 +221,39 @@ class TestOverlappingRedactions:
         result, records = redact(text)
         assert "sk-ant" not in result
         assert result.count("[REDACTED]") >= 1
+
+
+class TestRedactsIdentity:
+    def test_default_user_path_preserved(self):
+        from claude_transcript_collector.redactor import redact_identity
+        out, n = redact_identity("ran in /home/ubuntu/proj and /Users/Administrator/x", usernames=())
+        assert "/home/ubuntu/proj" in out
+        assert "/Users/Administrator/x" in out
+        assert n == 0
+
+    def test_real_user_path_redacted(self):
+        from claude_transcript_collector.redactor import redact_identity
+        out, n = redact_identity("cwd /home/nikolaskuhn/code", usernames=())
+        assert "/home/nikolaskuhn/code" not in out
+        assert "/home/[USER]/code" in out
+        assert n == 1
+
+    def test_bare_username_token_redacted(self):
+        from claude_transcript_collector.redactor import redact_identity
+        out, n = redact_identity("author: nikolaskuhn committed", usernames=("nikolaskuhn",))
+        assert "nikolaskuhn" not in out
+        assert "[USER]" in out
+
+    def test_email_real_tld_redacted_decorator_preserved(self):
+        from claude_transcript_collector.redactor import redact_identity
+        out, n = redact_identity("mail me@anthropic.com via @dataclasses.dataclass", usernames=())
+        assert "me@anthropic.com" not in out
+        assert "[EMAIL]" in out
+        assert "@dataclasses.dataclass" in out
+
+    def test_stoplist_env_extension(self, monkeypatch):
+        from claude_transcript_collector import redactor
+        monkeypatch.setenv("CTC_USERNAME_STOPLIST", "buildbot")
+        out, n = redactor.redact_identity("/home/buildbot/x", usernames=())
+        assert "/home/buildbot/x" in out
+        assert n == 0
