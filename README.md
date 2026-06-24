@@ -33,12 +33,15 @@ are collected.
 ## How a contributor runs it
 
 ```bash
-CTC_S3_BUCKET=claude-transcripts-myles \
 CTC_AWS_ACCESS_KEY_ID=AKIA... \
 CTC_AWS_SECRET_ACCESS_KEY='...' \
   uvx --from 'git+https://github.com/nick-kuhn/claude-transcript-collector' \
   claude-transcript-collector
 ```
+
+The destination bucket defaults to `rr-agent-transcripts` (in `us-east-1`), so
+contributors only need to supply the uploader credentials. Override with
+`CTC_S3_BUCKET` / `CTC_S3_REGION` if those change.
 
 This opens a local web UI at <http://localhost:8899>. The contributor previews
 each session (redacted by default), ticks the ones to share (per session, per
@@ -75,7 +78,7 @@ group/redaction info.
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `CTC_S3_BUCKET` | `claude-transcripts-myles` | Destination bucket |
+| `CTC_S3_BUCKET` | `rr-agent-transcripts` | Destination bucket |
 | `CTC_S3_REGION` | `us-east-1` | Bucket region (must match the bucket) |
 | `CTC_AWS_ACCESS_KEY_ID` | _(unset)_ | Upload key; if unset, boto3's default credential chain is used |
 | `CTC_AWS_SECRET_ACCESS_KEY` | _(unset)_ | Upload secret |
@@ -96,7 +99,7 @@ that, on the one bucket:
   "Statement": [{
     "Effect": "Allow",
     "Action": "s3:PutObject",
-    "Resource": "arn:aws:s3:::claude-transcripts-myles/*"
+    "Resource": "arn:aws:s3:::rr-agent-transcripts/*"
   }]
 }
 ```

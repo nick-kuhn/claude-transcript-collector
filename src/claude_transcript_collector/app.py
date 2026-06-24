@@ -27,7 +27,7 @@ from jinja2 import Environment, PackageLoader
 from .redactor import redact_jsonl_content
 from .sources import SOURCES, detect_all, find_session, get_source
 
-S3_BUCKET = os.environ.get("CTC_S3_BUCKET", "claude-transcripts-myles")
+S3_BUCKET = os.environ.get("CTC_S3_BUCKET", "rr-agent-transcripts")
 S3_REGION = os.environ.get("CTC_S3_REGION", "us-east-1")
 AWS_ACCESS_KEY_ID = os.environ.get("CTC_AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.environ.get("CTC_AWS_SECRET_ACCESS_KEY", "")
