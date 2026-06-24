@@ -81,6 +81,26 @@ def _extract_message(obj: dict) -> tuple[str, str] | None:
     return role, text
 
 
+def _payload(obj: dict) -> dict:
+    p = obj.get("payload")
+    return p if isinstance(p, dict) else obj
+
+
+def _is_subagent_rollout(path) -> bool:
+    """True if this rollout is a Codex subagent (e.g. the 'guardian' monitor).
+
+    Top-level interactive sessions record `source: "cli"`; subagents record
+    `source: {"subagent": {...}}` in their session_meta. Subagent rollouts are
+    harness scaffolding, not real user<->agent conversations, so we skip them.
+    The check reads only the first object (session_meta), so it stays cheap.
+    """
+    first = next(iter_jsonl(path), None)
+    if first is None:
+        return False
+    return isinstance(_payload(first).get("source"), dict) and \
+        "subagent" in _payload(first)["source"]
+
+
 class CodexSource:
     id = "codex"
     label = "Codex"
@@ -93,6 +113,8 @@ class CodexSource:
 
         by_group: dict[str, Group] = {}
         for f in sorted(sessions_dir.rglob("rollout-*.jsonl")):
+            if _is_subagent_rollout(f):
+                continue
             cwd, first, count = self._summary(f)
             key = _encode_cwd(cwd) if cwd else "_ungrouped"
             label = cwd or "(unknown working dir)"

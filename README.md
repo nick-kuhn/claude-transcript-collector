@@ -24,6 +24,12 @@ artifact collected is the **raw (redacted) transcript** in its native format;
 previews are best-effort, so harness-version schema drift never affects what is
 stored.
 
+**Codex subagent sessions are excluded.** Codex records `source: "cli"` for
+top-level interactive sessions and `source: {"subagent": …}` for spawned
+subagents (e.g. the `guardian` approval monitor, whose transcript is reviewer
+scaffolding rather than a real user↔agent conversation). Only top-level sessions
+are collected.
+
 ## How a contributor runs it
 
 ```bash

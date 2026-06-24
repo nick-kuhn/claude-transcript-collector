@@ -49,11 +49,29 @@ def _seed_codex(iso):
     _write_jsonl(
         iso["codex_sessions"] / "2026" / "06" / "24" / f"rollout-2026-06-24T10-00-00-{uuid}.jsonl",
         [
-            {"type": "session_meta", "payload": {"cwd": "/home/u/proj", "id": uuid}},
+            {"type": "session_meta", "payload": {"cwd": "/home/u/proj", "id": uuid, "source": "cli"}},
             {"type": "message", "role": "user",
              "content": [{"type": "input_text", "text": "hello codex"}]},
             {"type": "response_item", "payload": {
                 "role": "assistant", "content": [{"type": "output_text", "text": "hey"}]}},
+        ],
+    )
+    return uuid
+
+
+def _seed_codex_guardian(iso):
+    """A monitor/subagent rollout that must be excluded from discovery."""
+    uuid = "99999999-8888-7777-6666-555555555555"
+    _write_jsonl(
+        iso["codex_sessions"] / "2026" / "06" / "24" / f"rollout-2026-06-24T11-00-00-{uuid}.jsonl",
+        [
+            {"type": "session_meta", "payload": {
+                "cwd": "/home/u/proj", "id": uuid,
+                "source": {"subagent": {"other": "guardian"}}}},
+            {"type": "message", "role": "user",
+             "content": [{"type": "input_text", "text": "assess this action"}]},
+            {"type": "response_item", "payload": {
+                "role": "assistant", "content": [{"type": "output_text", "text": "{\"outcome\":\"allow\"}"}]}},
         ],
     )
     return uuid
@@ -105,6 +123,20 @@ def test_codex_discover_tolerant(iso):
     assert s.id == uuid
     assert s.first_message == "hello codex"
     assert s.message_count == 2  # user + assistant
+
+
+def test_codex_excludes_guardian_subagent(iso):
+    _seed_codex(iso)            # source: "cli"  -> kept
+    _seed_codex_guardian(iso)   # source: {subagent: guardian} -> dropped
+    groups = CodexSource().discover()
+    sessions = [s for g in groups for s in g.sessions]
+    assert len(sessions) == 1
+    assert sessions[0].first_message == "hello codex"
+
+
+def test_codex_only_subagents_yields_nothing(iso):
+    _seed_codex_guardian(iso)
+    assert CodexSource().discover() == []
 
 
 # --- Pi ---
