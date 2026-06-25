@@ -118,10 +118,14 @@ PATTERNS: list[tuple[str, re.Pattern, int, str]] = [
         r"-----END (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
     ), 0, "pem"),
 
-    # Passwords in URLs: ://user:pass@host — replace only the password.
+    # Basic-auth userinfo in URLs: ://user:pass@host — mock the WHOLE userinfo
+    # (user AND pass), since the username slot routinely carries a token used as
+    # the user. Same trigger as before (requires user:pass), but the username no
+    # longer survives. For DB schemes this coincides with DB Connection URI below
+    # (same span, same kind) and merges to one.
     ("URL Password", re.compile(
-        r"(://[^:/?#\s]+):([^@/?#\s]{3,})(@)"
-    ), 2, "password"),
+        r"(://)([^:/?#\s]+:[^@/?#\s]{3,})(@)"
+    ), 2, "uri_userinfo"),
 
     # DB/messaging connection URIs with userinfo — covers the password-LESS /
     # token-as-user form (scheme://token@host) the URL Password pattern misses.

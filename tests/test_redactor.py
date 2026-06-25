@@ -91,6 +91,13 @@ class TestRedactsSecrets:
         assert "s3cretP4ss" not in result
         assert "@db.example.com/mydb" in result       # host preserved
 
+    def test_url_basic_auth_username_also_mocked(self):
+        # Non-DB scheme: the username slot (a token-as-user) must not survive.
+        text = "https://my_secret_token:hunter2@api.example.com"
+        result, _ = redact(text)
+        assert "my_secret_token" not in result and "hunter2" not in result
+        assert "@api.example.com" in result            # host preserved
+
     def test_password_assignment(self):
         text = 'password = "my_super_secret_123"'
         result, _ = redact(text)
