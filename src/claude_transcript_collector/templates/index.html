@@ -261,10 +261,13 @@ function deselectAll() {
   updateCounts();
 }
 
+// localStorage is best-effort (it throws in Safari private mode / when site
+// storage is blocked) — never let it break the upload flow.
+function saveName(v) { try { if (v) localStorage.setItem('ctc_name', v); } catch (e) {} }
+function loadName() { try { return localStorage.getItem('ctc_name'); } catch (e) { return null; } }
+
 function onNameInput() {
-  const v = document.getElementById('contributor-name').value.trim();
-  if (v) localStorage.setItem('ctc_name', v);
-  updateCounts();
+  saveName(document.getElementById('contributor-name').value.trim());
 }
 
 function updateCounts() {
@@ -381,7 +384,7 @@ async function uploadSelected() {
       document.getElementById('contributor-name').value = entered;
     }
   }
-  if (contributorName) localStorage.setItem('ctc_name', contributorName);
+  saveName(contributorName);
   contributorName = contributorName || 'anonymous';
   const redactIdentity = document.getElementById('identity-toggle').checked;
 
@@ -411,7 +414,7 @@ async function uploadSelected() {
 
 // Restore a remembered name and set the initial button state.
 (function init() {
-  const saved = localStorage.getItem('ctc_name');
+  const saved = loadName();
   if (saved) document.getElementById('contributor-name').value = saved;
   updateCounts();
 })();
