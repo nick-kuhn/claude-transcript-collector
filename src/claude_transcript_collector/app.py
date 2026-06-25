@@ -29,7 +29,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from jinja2 import Environment, PackageLoader
 
-from .redactor import redact_identity, redact_jsonl_content, redact_path_token
+from .redactor import (
+    local_usernames, redact_identity, redact_jsonl_content, redact_path_token)
 from .sources import SOURCES, detect_all, find_session, get_source
 
 S3_BUCKET = os.environ.get("CTC_S3_BUCKET", "rr-agent-transcripts")
@@ -225,6 +226,11 @@ def _upload_units(s3, source, sessions, contributor, redact_id=True, on_unit=Non
                       ContentType="application/zip")
         return {"source": source.id, "s3_key": key, "session_count": len(unit),
                 "zip_size_bytes": len(zip_bytes), "total_redactions": man["total_redactions"]}
+
+    # Warm the username lru_cache on this thread before fanning out, so the pool
+    # threads don't race a cold cache (a torn first write could permanently drop
+    # the git user.name from bare-token redaction).
+    local_usernames()
 
     workers = min(UPLOAD_CONCURRENCY, len(units))
     with ThreadPoolExecutor(max_workers=workers) as ex:
