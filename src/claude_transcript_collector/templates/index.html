@@ -374,7 +374,7 @@ async function uploadSelected() {
   let contributorName = document.getElementById('contributor-name').value.trim();
   if (!contributorName) {
     const entered = (window.prompt(
-      'Enter your name so your transcripts are attributed (leave blank to upload anonymously):',
+      'Enter your name (leave blank to upload anonymously):',
       '') || '').trim();
     if (entered) {
       contributorName = entered;
