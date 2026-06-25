@@ -81,13 +81,40 @@ def test_upload_units_deterministic_overwrite(tmp_path):
     sess = _sess("x", size=f.stat().st_size, path=f)
     s3 = _FakeS3()
     ticks = []
-    up1 = appmod._upload_units(s3, Src(), [sess], "tester", on_unit=lambda n: ticks.append(n))
-    assert len(up1) == 1
+    up1, err1 = appmod._upload_units(s3, Src(), [sess], "tester", on_unit=lambda n: ticks.append(n))
+    assert len(up1) == 1 and err1 == []
     key1 = up1[0]["s3_key"]
-    up2 = appmod._upload_units(s3, Src(), [sess], "tester")
+    up2, _ = appmod._upload_units(s3, Src(), [sess], "tester")
     assert len(up2) == 1 and up2[0]["s3_key"] == key1   # deterministic key -> overwrite in place
     assert len(s3.objs) == 1                            # re-run overwrites, no duplicate
     assert sum(ticks) == 1
+
+
+def test_upload_units_collects_per_unit_errors(tmp_path, monkeypatch):
+    monkeypatch.setattr(appmod, "UNIT_BYTES", 10)          # one unit per session
+    monkeypatch.setattr(appmod, "UPLOAD_CONCURRENCY", 1)   # deterministic for the test
+    sessions = []
+    for i in range(3):
+        f = tmp_path / f"s{i}.jsonl"
+        f.write_text('{"type":"user","message":{"content":"hi"}}\n')
+        sessions.append(_sess(f"s{i}", size=f.stat().st_size, path=f))
+
+    class Src:
+        id = "claude_code"
+        source_format = "claude-jsonl"
+
+    class FlakyS3:
+        def __init__(self): self.objs = {}; self.calls = 0
+        def put_object(self, Bucket, Key, Body, ContentType):
+            self.calls += 1
+            if self.calls == 1:
+                raise Exception("boom")
+            self.objs[Key] = Body
+
+    ticks = []
+    up, errs = appmod._upload_units(FlakyS3(), Src(), sessions, "t", on_unit=lambda n: ticks.append(n))
+    assert len(errs) == 1 and len(up) == 2     # one unit failed, others still uploaded
+    assert sum(ticks) == 3                      # progress ticks for every unit, success or fail
 
 
 def test_upload_job_endpoints():
