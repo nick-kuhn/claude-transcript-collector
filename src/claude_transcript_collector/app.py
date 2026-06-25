@@ -19,6 +19,7 @@ import uuid
 import webbrowser
 import zipfile
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,7 +29,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from jinja2 import Environment, PackageLoader
 
-from .redactor import redact_identity, redact_jsonl_content, redact_path_token
+from .redactor import (
+    local_usernames, redact_identity, redact_jsonl_content, redact_path_token)
 from .sources import SOURCES, detect_all, find_session, get_source
 
 S3_BUCKET = os.environ.get("CTC_S3_BUCKET", "rr-agent-transcripts")
@@ -110,6 +112,8 @@ async def preview_session(source: str, group: str, session: str, parent: str = "
 # small object. Keys are deterministic, so completed units stay durable and a
 # re-run overwrites them in place (idempotent — no duplicates).
 UNIT_BYTES = int(os.environ.get("CTC_UNIT_BYTES", str(25 * 1024 * 1024)))
+# Upload units concurrently to overlap network round-trips on large uploads.
+UPLOAD_CONCURRENCY = max(1, int(os.environ.get("CTC_UPLOAD_CONCURRENCY", "4")))
 
 
 def _group_token(group_key):
@@ -199,24 +203,47 @@ def _build_unit_zip(source, unit_sessions, contributor, redact_id=True):
 
 
 def _upload_units(s3, source, sessions, contributor, redact_id=True, on_unit=None):
-    """Upload a source's sessions as size-budgeted units.
+    """Upload a source's sessions as size-budgeted units, in parallel.
 
     Keys are deterministic, so a re-run overwrites the same objects in place
     (idempotent — no duplicates) and an aborted run's completed units stay
-    durable. The uploader key needs only s3:PutObject. on_unit(n) ticks progress.
+    durable. The uploader key needs only s3:PutObject. Units upload concurrently
+    (CTC_UPLOAD_CONCURRENCY) to overlap network latency; the boto3 client is
+    thread-safe for calls. Returns (uploaded_results, unit_errors); a single
+    unit's failure doesn't abort the others. on_unit(n) ticks progress (called
+    from this thread as each unit finishes, so it needs no lock).
     """
-    uploaded = []
-    for group_key, part, unit in _plan_units(sessions):
+    units = list(_plan_units(sessions))
+    uploaded, errors = [], []
+    if not units:
+        return uploaded, errors
+
+    def _do(u):
+        group_key, part, unit = u
         key = _unit_key(source, contributor, group_key, part, unit)
         zip_bytes, man = _build_unit_zip(source, unit, contributor, redact_id)
         s3.put_object(Bucket=S3_BUCKET, Key=key, Body=zip_bytes,
                       ContentType="application/zip")
-        uploaded.append({"source": source.id, "s3_key": key,
-                         "session_count": len(unit), "zip_size_bytes": len(zip_bytes),
-                         "total_redactions": man["total_redactions"]})
-        if on_unit:
-            on_unit(len(unit))
-    return uploaded
+        return {"source": source.id, "s3_key": key, "session_count": len(unit),
+                "zip_size_bytes": len(zip_bytes), "total_redactions": man["total_redactions"]}
+
+    # Warm the username lru_cache on this thread before fanning out, so the pool
+    # threads don't race a cold cache (a torn first write could permanently drop
+    # the git user.name from bare-token redaction).
+    local_usernames()
+
+    workers = min(UPLOAD_CONCURRENCY, len(units))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        fut_unit = {ex.submit(_do, u): u for u in units}
+        for fut in as_completed(fut_unit):
+            n = len(fut_unit[fut][2])
+            try:
+                uploaded.append(fut.result())
+            except Exception as e:
+                errors.append({"source": source.id, "error": f"{type(e).__name__}: {e}"})
+            if on_unit:
+                on_unit(n)   # tick even on failure so the bar still completes
+    return uploaded, errors
 
 
 # --- background upload jobs (so closing the tab can't abort an upload) ---
@@ -259,11 +286,12 @@ def _run_upload_job(job_id, selected, contributor, redact_id):
         s3 = _make_s3_client()
         for source, sessions in to_upload:
             try:
-                uploaded = _upload_units(
+                uploaded, unit_errors = _upload_units(
                     s3, source, sessions, contributor, redact_id,
                     on_unit=lambda n: job.__setitem__("done", job["done"] + n))
                 with JOBS_LOCK:
                     job["uploads"].extend(uploaded)
+                    job["errors"].extend(unit_errors)
             except Exception as e:
                 with JOBS_LOCK:
                     job["errors"].append({"source": source.id, "error": f"{type(e).__name__}: {e}"})
@@ -334,14 +362,16 @@ def headless_upload(contributor_name: str = "anonymous"):
         any_found = True
         print(f"[{source.label}] uploading {len(sessions)} sessions as units...")
         try:
-            uploaded = _upload_units(s3, source, sessions, contributor)
+            uploaded, unit_errors = _upload_units(s3, source, sessions, contributor)
         except Exception as e:
             print(f"[{source.label}] upload failed: {type(e).__name__}: {e}")
             continue
         mb = sum(u["zip_size_bytes"] for u in uploaded) / 1024 / 1024
         red = sum(u["total_redactions"] for u in uploaded)
-        print(f"[{source.label}] {len(uploaded)} unit(s) uploaded "
-              f"({mb:.1f} MB, {red} redactions).")
+        msg = f"[{source.label}] {len(uploaded)} unit(s) uploaded ({mb:.1f} MB, {red} redactions)"
+        if unit_errors:
+            msg += f"; {len(unit_errors)} unit(s) failed"
+        print(msg + ".")
 
     print("No transcripts found." if not any_found else "Done!")
 

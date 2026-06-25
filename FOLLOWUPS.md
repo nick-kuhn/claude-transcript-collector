@@ -8,6 +8,9 @@ _None currently._
 
 ## Done
 
+- **Resilient + parallel uploads**: size-budgeted resumable units, background-job
+  execution with a progress bar, and concurrent unit uploads
+  (`CTC_UPLOAD_CONCURRENCY`).
 - **Pi (`pi-subagents`) task subagents** collected + marked: run-dir transcripts
   `<parent>/<runId>/run-N/session.jsonl` (parent from the path) and forked
   sessions (parent from the `parentSession` header). `events.jsonl` and

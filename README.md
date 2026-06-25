@@ -101,6 +101,8 @@ units are overwritten in place, not duplicated.)
 | `CTC_S3_REGION` | `us-east-1` | Bucket region (must match the bucket) |
 | `CTC_AWS_ACCESS_KEY_ID` | _(unset)_ | Upload key; if unset, boto3's default credential chain is used |
 | `CTC_AWS_SECRET_ACCESS_KEY` | _(unset)_ | Upload secret |
+| `CTC_UNIT_BYTES` | `26214400` (25 MB) | Per-unit upload size budget |
+| `CTC_UPLOAD_CONCURRENCY` | `4` | Units uploaded in parallel |
 | `PORT` | `8899` | Local UI port |
 
 If the `CTC_AWS_*` variables are not set, the tool falls back to boto3's normal
