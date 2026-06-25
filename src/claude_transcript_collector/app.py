@@ -137,11 +137,17 @@ def _zip_and_upload(s3, source, sessions, contributor, redact_secrets, redact_id
                 redaction_count += n
             total_redactions += redaction_count
 
-            zf.writestr(f"{group_key}/{sess.id}.jsonl", raw)
+            if sess.is_subagent and sess.parent:
+                arc = f"{group_key}/{sess.parent}/subagents/{sess.id}.jsonl"
+            else:
+                arc = f"{group_key}/{sess.id}.jsonl"
+            zf.writestr(arc, raw)
             manifest_sessions.append({
                 "group": group_key,
                 "group_label": group_label,
                 "session": sess.id,
+                "is_subagent": sess.is_subagent,
+                "parent": sess.parent,
                 "size_bytes": len(raw.encode("utf-8")),
                 "redactions": redaction_count,
             })
@@ -151,6 +157,7 @@ def _zip_and_upload(s3, source, sessions, contributor, redact_secrets, redact_id
             "source_format": source.source_format,
             "contributor": contributor,
             "uploaded_at": datetime.utcnow().isoformat(),
+            "subagent_count": sum(1 for s in manifest_sessions if s["is_subagent"]),
             "sessions": manifest_sessions,
             "total_redactions": total_redactions,
         }, indent=2))

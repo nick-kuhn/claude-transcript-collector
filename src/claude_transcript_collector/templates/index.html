@@ -120,6 +120,11 @@
   .toast.show { display: block; }
 
   .empty { color: var(--text-muted); padding: 40px 0; text-align: center; }
+  .badge {
+    font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.03em;
+    background: rgba(210,153,34,0.15); color: var(--yellow);
+    border: 1px solid var(--yellow); border-radius: 4px; padding: 1px 5px; flex-shrink: 0;
+  }
   input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
   .spacer { flex: 1; }
   .body-pad { padding-bottom: 60px; }
@@ -177,6 +182,7 @@
            data-group="{{ group.key }}"
            data-session="{{ session.id }}">
         <input type="checkbox" class="session-checkbox" onchange="updateCounts()">
+        {% if session.is_subagent %}<span class="badge" title="Spawned task subagent">subagent</span>{% endif %}
         <span class="session-summary" onclick="previewSession(this)" title="Click to preview">
           {{ session.first_message }}
         </span>
