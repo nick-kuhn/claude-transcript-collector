@@ -103,10 +103,21 @@ def _subagent_kind(path) -> str:
     src = _payload(first).get("source")
     if not isinstance(src, dict) or "subagent" not in src:
         return "top"
-    blob = json.dumps(src["subagent"]).lower()
-    if any(name in blob for name in _MONITOR_NAMES):
-        return "monitor"
-    return "task"
+    # Match monitor names against the descriptor's string VALUES exactly — not a
+    # substring over the serialized blob, which would drop legitimate task
+    # subagents named e.g. "db-monitor" or working under a path containing
+    # "guardian". Observed shape is {"subagent": {"other": "guardian"}}.
+    names: set[str] = set()
+
+    def _collect(v):
+        if isinstance(v, str):
+            names.add(v.lower())
+        elif isinstance(v, dict):
+            for x in v.values():
+                _collect(x)
+
+    _collect(src["subagent"])
+    return "monitor" if names & _MONITOR_NAMES else "task"
 
 
 class CodexSource:

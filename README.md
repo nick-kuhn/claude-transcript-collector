@@ -33,8 +33,12 @@ subagents are included and flagged `is_subagent` in the manifest (with their
   transcript is reviewer scaffolding that quotes other transcripts, not a real
   user↔agent conversation.
 
-Not yet collected: **Pi** subagents from the `pi-subagents` package — they live
-under `~/.pi/agent/sessions/subagent/`, which the Pi adapter's globs don't cover.
+Not yet collected: **Pi** subagents from the `pi-subagents` package. They are
+standard Pi session JSONL, but written under
+`~/.pi/agent/sessions/<parent>/<runId>/run-N/session.jsonl` (or a forked session
+file), which the Pi adapter's globs don't yet cover. (Note: `events.jsonl` and
+`subagent-artifacts/*.jsonl` in those run dirs are different schemas, not
+sessions.)
 
 ## How a contributor runs it
 
