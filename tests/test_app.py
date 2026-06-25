@@ -66,10 +66,6 @@ def test_plan_units_deterministic_regardless_of_order():
 
 class _FakeS3:
     def __init__(self): self.objs = {}
-    def head_object(self, Bucket, Key):
-        if Key not in self.objs:
-            raise Exception("404")
-        return {}
     def put_object(self, Bucket, Key, Body, ContentType):
         self.objs[Key] = Body
 

@@ -19,7 +19,7 @@ import uuid
 import webbrowser
 import zipfile
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import boto3
@@ -119,6 +119,9 @@ def _group_token(group_key):
 
 
 def _members_hash(unit_sessions):
+    # Membership-addressed: the same selection re-uploads to the same key
+    # (overwrite-in-place). A *different* selection yields a different key, so the
+    # previous parts remain as orphan objects (harmless; dedup downstream by id).
     ids = "\n".join(f"{s.parent or ''}/{s.id}" for s in unit_sessions)
     return hashlib.sha1(ids.encode("utf-8")).hexdigest()[:8]
 
@@ -187,7 +190,7 @@ def _build_unit_zip(source, unit_sessions, contributor, redact_id=True):
             })
         manifest = {
             "source": source.id, "source_format": source.source_format,
-            "contributor": contributor, "uploaded_at": datetime.utcnow().isoformat(),
+            "contributor": contributor, "uploaded_at": datetime.now(timezone.utc).isoformat(),
             "subagent_count": sum(1 for s in manifest_sessions if s["is_subagent"]),
             "sessions": manifest_sessions, "total_redactions": total_redactions,
         }
