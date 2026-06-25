@@ -41,6 +41,15 @@ def _encode_cwd(cwd: str) -> str:
     return cwd.replace("\\", "/").lstrip("/").replace("/", "-") or "_root"
 
 
+def _short_id(name: str) -> str:
+    """Recover a session id from a `<timestamp>_<id>` filename/dir stem.
+
+    Pi names sessions `<ts>_<sessionId>.jsonl` (ts uses dashes, id is a UUID), so
+    there is exactly one underscore. No-op when there is no underscore.
+    """
+    return name.split("_", 1)[-1]
+
+
 def _block_text(content) -> str:
     if isinstance(content, str):
         return content
@@ -92,20 +101,37 @@ class PiSource:
     label = "Pi"
     source_format = "pi-session-jsonl-v3"
 
-    def _candidate_files(self) -> list[Path]:
-        files: list[Path] = []
+    def _candidate_files(self) -> list[tuple[Path, str | None]]:
+        """Return (path, parent) candidates. parent is set for subagents.
+
+        - Normal sessions: --<cwd>--/<ts>_<id>.jsonl  (parent=None; a fork is
+          detected later via its `parentSession` header).
+        - pi-subagents task runs: <parent>/<runId>/run-N/session.jsonl
+          (parent = the parent session's filename stem, two-or-more levels up).
+        Only `session.jsonl` is matched, so events.jsonl / subagent-artifacts are
+        never picked up.
+        """
+        out: dict[Path, str | None] = {}
         session_dir = _session_dir()
         if session_dir.exists():
-            files.extend(session_dir.glob("--*--/*.jsonl"))
+            for f in session_dir.glob("--*--/*.jsonl"):
+                out[f] = None
+            for f in session_dir.rglob("run-*/session.jsonl"):
+                try:
+                    parent = f.relative_to(session_dir).parts[0]
+                except ValueError:
+                    parent = f.parents[2].name
+                out[f] = parent
         # Flat fallback for older buggy versions that wrote to the agent dir.
         agent_dir = _agent_dir()
         if agent_dir.exists():
-            files.extend(agent_dir.glob("*.jsonl"))
-        return sorted(set(files))
+            for f in agent_dir.glob("*.jsonl"):
+                out.setdefault(f, None)
+        return sorted(out.items())
 
     def discover(self) -> list[Group]:
         by_group: dict[str, Group] = {}
-        for f in self._candidate_files():
+        for f, run_parent in self._candidate_files():
             objs = _read_objects(f)
             if not _is_pi_transcript(objs):
                 continue
@@ -113,8 +139,24 @@ class PiSource:
             cwd = header.get("cwd") or ""
             key = _encode_cwd(cwd) if cwd else "_ungrouped"
             label = cwd or "(unknown working dir)"
-            sid = header.get("id") or f.stem.split("_", 1)[-1]
             first, count = self._summary(objs)
+
+            # Subagent if it came from a run-*/session.jsonl path, or it's a
+            # forked session (carries a parentSession header). Store `parent` as
+            # the parent session's *id* (recovered from the <ts>_<id> stem) so it
+            # cross-references a collected parent session, matching Claude/Codex.
+            is_subagent = run_parent is not None
+            parent = _short_id(run_parent) if run_parent else None
+            if parent is None and header.get("parentSession"):
+                is_subagent = True
+                parent = _short_id(Path(header["parentSession"]).stem)
+
+            sid = header.get("id")
+            if not sid:
+                # No header id: recover the short id from a normal <ts>_<id>
+                # filename, or use a unique <runId>-<runN> for a run-dir subagent
+                # (whose file is literally session.jsonl).
+                sid = f"{f.parent.parent.name}-{f.parent.name}" if run_parent else _short_id(f.stem)
 
             group = by_group.get(key)
             if group is None:
@@ -129,6 +171,8 @@ class PiSource:
                 first_message=first,
                 message_count=count,
                 modified=mtime(f),
+                is_subagent=is_subagent,
+                parent=parent,
             ))
         return list(by_group.values())
 
