@@ -333,6 +333,10 @@ class TestRedactsCredentials:
         out, n = redact_jsonl_content("ssh abc12345-f0a1b2@ssh.runpod.io")
         assert "abc12345-f0a1b2@ssh.runpod.io" not in out and "[REDACTED]" in out
 
+    def test_runpod_ssh_uppercase_hex(self):
+        out, n = redact_jsonl_content("ssh abc12345-F0A1B2@ssh.runpod.io")
+        assert "abc12345-F0A1B2@ssh.runpod.io" not in out and "[REDACTED]" in out
+
     def test_db_connection_uri_passwordless(self):
         out, n = redact_jsonl_content("redis://h7sometoken@cache.example/0")
         assert "h7sometoken" not in out

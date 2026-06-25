@@ -100,8 +100,8 @@ PATTERNS: list[tuple[str, re.Pattern]] = [
     # Neon Postgres role/password token (distinctive npg_ prefix)
     ("Neon Credential", re.compile(r"\bnpg_[A-Za-z0-9]{8,}\b")),
 
-    # RunPod SSH target: <pod-id>-<hex>@ssh.runpod.io
-    ("RunPod SSH", re.compile(r"\b[A-Za-z0-9]{8,}-[a-f0-9]{6,}@ssh\.runpod\.io\b")),
+    # RunPod SSH target: <pod-id>-<hex>@ssh.runpod.io (hex case-insensitive — insurance)
+    ("RunPod SSH", re.compile(r"\b[A-Za-z0-9]{8,}-[a-fA-F0-9]{6,}@ssh\.runpod\.io\b")),
 
     # Generic secret/password/token assignments (key = "value" or key: "value")
     ("Secret Assignment", re.compile(
