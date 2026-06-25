@@ -267,10 +267,18 @@ def _seed_pi_run_subagent(iso):
 def test_pi_discovers_run_subagent_marked(iso):
     _seed_pi(iso)               # normal session pi sess-123
     _seed_pi_run_subagent(iso)
+    # the actual parent top-level session (header id "parent-abc"); its filename
+    # stem is the run-dir name, and the subagent's parent must resolve to its id.
+    _write_jsonl(iso["pi_sessions"] / "--home-u-proj--" / "2026-06-24T09-00-00-000Z_parent-abc.jsonl", [
+        {"type": "session", "version": 3, "id": "parent-abc", "cwd": "/home/u/proj"},
+        {"type": "message", "id": "p1", "message": {"role": "user", "content": "go"}},
+    ])
     sessions = {s.id: s for g in PiSource().discover() for s in g.sessions}
     assert sessions["sess-123"].is_subagent is False
     assert sessions["pi-sub-1"].is_subagent is True
-    assert sessions["pi-sub-1"].parent == "2026-06-24T09-00-00-000Z_parent-abc"
+    # parent resolves to the parent session's id, and that session is collected
+    assert sessions["pi-sub-1"].parent == "parent-abc"
+    assert sessions["parent-abc"].is_subagent is False
 
 
 def test_pi_fork_session_marked_via_parent_header(iso):
@@ -282,7 +290,7 @@ def test_pi_fork_session_marked_via_parent_header(iso):
     ])
     sessions = {s.id: s for g in PiSource().discover() for s in g.sessions}
     assert sessions["pi-fork-1"].is_subagent is True
-    assert sessions["pi-fork-1"].parent == "2026_parent-xyz"
+    assert sessions["pi-fork-1"].parent == "parent-xyz"   # short id, not the <ts>_<id> stem
 
 
 def test_pi_ignores_events_jsonl_in_run_dir(iso):

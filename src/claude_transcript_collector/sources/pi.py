@@ -41,6 +41,15 @@ def _encode_cwd(cwd: str) -> str:
     return cwd.replace("\\", "/").lstrip("/").replace("/", "-") or "_root"
 
 
+def _short_id(name: str) -> str:
+    """Recover a session id from a `<timestamp>_<id>` filename/dir stem.
+
+    Pi names sessions `<ts>_<sessionId>.jsonl` (ts uses dashes, id is a UUID), so
+    there is exactly one underscore. No-op when there is no underscore.
+    """
+    return name.split("_", 1)[-1]
+
+
 def _block_text(content) -> str:
     if isinstance(content, str):
         return content
@@ -130,16 +139,24 @@ class PiSource:
             cwd = header.get("cwd") or ""
             key = _encode_cwd(cwd) if cwd else "_ungrouped"
             label = cwd or "(unknown working dir)"
-            sid = header.get("id") or f.stem.split("_", 1)[-1]
             first, count = self._summary(objs)
 
             # Subagent if it came from a run-*/session.jsonl path, or it's a
-            # forked session (carries a parentSession header).
+            # forked session (carries a parentSession header). Store `parent` as
+            # the parent session's *id* (recovered from the <ts>_<id> stem) so it
+            # cross-references a collected parent session, matching Claude/Codex.
             is_subagent = run_parent is not None
-            parent = run_parent
+            parent = _short_id(run_parent) if run_parent else None
             if parent is None and header.get("parentSession"):
                 is_subagent = True
-                parent = Path(header["parentSession"]).stem
+                parent = _short_id(Path(header["parentSession"]).stem)
+
+            sid = header.get("id")
+            if not sid:
+                # No header id: recover the short id from a normal <ts>_<id>
+                # filename, or use a unique <runId>-<runN> for a run-dir subagent
+                # (whose file is literally session.jsonl).
+                sid = f"{f.parent.parent.name}-{f.parent.name}" if run_parent else _short_id(f.stem)
 
             group = by_group.get(key)
             if group is None:
