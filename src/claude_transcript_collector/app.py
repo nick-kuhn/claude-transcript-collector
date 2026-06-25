@@ -9,6 +9,7 @@ import io
 import json
 import os
 import re
+import socket
 import sys
 import uuid
 import webbrowser
@@ -272,6 +273,18 @@ def headless_upload(contributor_name: str = "anonymous"):
         print("Done!")
 
 
+def _find_free_port(start: int, host: str = "127.0.0.1", tries: int = 20) -> int | None:
+    """Return the first bindable port at or after `start` (scanning `tries`)."""
+    for port in range(start, start + tries):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind((host, port))
+                return port
+            except OSError:
+                continue
+    return None
+
+
 def main():
     headless = "--all" in sys.argv
     contributor_name = "anonymous"
@@ -282,7 +295,13 @@ def main():
     if headless:
         headless_upload(contributor_name)
     else:
-        port = int(os.environ.get("PORT", 8899))
+        base = int(os.environ.get("PORT", 8899))
+        port = _find_free_port(base)
+        if port is None:
+            print(f"No free port found in {base}-{base + 19}; is something stuck?")
+            return
+        if port != base:
+            print(f"Port {base} is in use — using {port} instead.")
         Timer(1.0, lambda: webbrowser.open(f"http://localhost:{port}")).start()
         print(f"Opening browser at http://localhost:{port}")
         print("Press Ctrl+C to stop.")
