@@ -36,13 +36,11 @@ subagents are included and flagged `is_subagent` in the manifest (with their
   `{"subagent": "review"|"compact"|"memory_consolidation"}` and
   `{"internal": …}`. (Top-level `"cli"`/`"vscode"`/`{"custom": …}` sessions are
   kept, unmarked.)
-
-Not yet collected: **Pi** subagents from the `pi-subagents` package. They are
-standard Pi session JSONL, but written under
-`~/.pi/agent/sessions/<parent>/<runId>/run-N/session.jsonl` (or a forked session
-file), which the Pi adapter's globs don't yet cover. (Note: `events.jsonl` and
-`subagent-artifacts/*.jsonl` in those run dirs are different schemas, not
-sessions.)
+- **Pi** — `pi-subagents` task runs at
+  `~/.pi/agent/sessions/<parent>/<runId>/run-N/session.jsonl` (parent from the
+  path) and forked sessions (parent from the `parentSession` header). Only
+  `session.jsonl` is collected; `events.jsonl` and `subagent-artifacts/*.jsonl`
+  in those run dirs are different schemas and are skipped.
 
 ## How a contributor runs it
 
@@ -131,8 +129,7 @@ that, on the one bucket:
   well-formatted secrets and credentials — AWS keys, `sk-`/token patterns, JWTs,
   PEM keys, DB/messaging connection URIs (`postgres://…@`, etc.), Neon (`npg_…`)
   and RunPod (`…@ssh.runpod.io`) credentials — but **not** proprietary source,
-  internal paths, or PII embedded in prose. Per-provider patterns are a stopgap;
-  a maintained secret-scanner is the durable direction (see `FOLLOWUPS.md`).
+  internal paths, or PII embedded in prose.
   Contributors should understand what a transcript contains before sharing it.
 
 ## Adding a new source

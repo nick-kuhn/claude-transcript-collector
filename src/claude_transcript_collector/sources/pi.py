@@ -92,20 +92,37 @@ class PiSource:
     label = "Pi"
     source_format = "pi-session-jsonl-v3"
 
-    def _candidate_files(self) -> list[Path]:
-        files: list[Path] = []
+    def _candidate_files(self) -> list[tuple[Path, str | None]]:
+        """Return (path, parent) candidates. parent is set for subagents.
+
+        - Normal sessions: --<cwd>--/<ts>_<id>.jsonl  (parent=None; a fork is
+          detected later via its `parentSession` header).
+        - pi-subagents task runs: <parent>/<runId>/run-N/session.jsonl
+          (parent = the parent session's filename stem, two-or-more levels up).
+        Only `session.jsonl` is matched, so events.jsonl / subagent-artifacts are
+        never picked up.
+        """
+        out: dict[Path, str | None] = {}
         session_dir = _session_dir()
         if session_dir.exists():
-            files.extend(session_dir.glob("--*--/*.jsonl"))
+            for f in session_dir.glob("--*--/*.jsonl"):
+                out[f] = None
+            for f in session_dir.rglob("run-*/session.jsonl"):
+                try:
+                    parent = f.relative_to(session_dir).parts[0]
+                except ValueError:
+                    parent = f.parents[2].name
+                out[f] = parent
         # Flat fallback for older buggy versions that wrote to the agent dir.
         agent_dir = _agent_dir()
         if agent_dir.exists():
-            files.extend(agent_dir.glob("*.jsonl"))
-        return sorted(set(files))
+            for f in agent_dir.glob("*.jsonl"):
+                out.setdefault(f, None)
+        return sorted(out.items())
 
     def discover(self) -> list[Group]:
         by_group: dict[str, Group] = {}
-        for f in self._candidate_files():
+        for f, run_parent in self._candidate_files():
             objs = _read_objects(f)
             if not _is_pi_transcript(objs):
                 continue
@@ -115,6 +132,14 @@ class PiSource:
             label = cwd or "(unknown working dir)"
             sid = header.get("id") or f.stem.split("_", 1)[-1]
             first, count = self._summary(objs)
+
+            # Subagent if it came from a run-*/session.jsonl path, or it's a
+            # forked session (carries a parentSession header).
+            is_subagent = run_parent is not None
+            parent = run_parent
+            if parent is None and header.get("parentSession"):
+                is_subagent = True
+                parent = Path(header["parentSession"]).stem
 
             group = by_group.get(key)
             if group is None:
@@ -129,6 +154,8 @@ class PiSource:
                 first_message=first,
                 message_count=count,
                 modified=mtime(f),
+                is_subagent=is_subagent,
+                parent=parent,
             ))
         return list(by_group.values())
 
