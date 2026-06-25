@@ -25,6 +25,7 @@
     flex-wrap: wrap;
   }
   .controls label { font-size: 0.85rem; display: flex; align-items: center; gap: 6px; }
+  #contributor-name:placeholder-shown { border-color: var(--yellow); }
   .controls input[type="text"] {
     background: var(--surface); border: 1px solid var(--border); color: var(--text);
     padding: 6px 10px; border-radius: 6px; font-size: 0.85rem;
@@ -138,7 +139,8 @@
 <div class="controls">
   <label>
     Your name:
-    <input type="text" id="contributor-name" placeholder="anonymous" value="">
+    <input type="text" id="contributor-name" placeholder="your name" value=""
+           oninput="onNameInput()">
   </label>
   <label>
     <input type="checkbox" id="identity-toggle" checked>
@@ -259,6 +261,12 @@ function deselectAll() {
   updateCounts();
 }
 
+function onNameInput() {
+  const v = document.getElementById('contributor-name').value.trim();
+  if (v) localStorage.setItem('ctc_name', v);
+  updateCounts();
+}
+
 function updateCounts() {
   const checked = document.querySelectorAll('.session-checkbox:checked');
   let totalSize = 0;
@@ -363,7 +371,18 @@ async function uploadSelected() {
     return { source: row.dataset.source, group: row.dataset.group, session: row.dataset.session, parent: row.dataset.parent || null };
   });
 
-  const contributorName = document.getElementById('contributor-name').value.trim() || 'anonymous';
+  let contributorName = document.getElementById('contributor-name').value.trim();
+  if (!contributorName) {
+    const entered = (window.prompt(
+      'Enter your name so your transcripts are attributed (leave blank to upload anonymously):',
+      '') || '').trim();
+    if (entered) {
+      contributorName = entered;
+      document.getElementById('contributor-name').value = entered;
+    }
+  }
+  if (contributorName) localStorage.setItem('ctc_name', contributorName);
+  contributorName = contributorName || 'anonymous';
   const redactIdentity = document.getElementById('identity-toggle').checked;
 
   try {
@@ -387,8 +406,15 @@ async function uploadSelected() {
     showToast('Upload failed: ' + e.message, true);
   }
   btn.textContent = 'Upload Selected';
-  btn.disabled = document.querySelectorAll('.session-checkbox:checked').length === 0;
+  updateCounts();
 }
+
+// Restore a remembered name and set the initial button state.
+(function init() {
+  const saved = localStorage.getItem('ctc_name');
+  if (saved) document.getElementById('contributor-name').value = saved;
+  updateCounts();
+})();
 </script>
 </body>
 </html>
