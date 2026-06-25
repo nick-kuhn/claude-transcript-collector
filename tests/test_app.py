@@ -74,7 +74,7 @@ class _FakeS3:
         self.objs[Key] = Body
 
 
-def test_upload_units_idempotent_and_resumable(tmp_path):
+def test_upload_units_deterministic_overwrite(tmp_path):
     f = tmp_path / "s.jsonl"
     f.write_text('{"type":"user","message":{"content":"hi"}}\n')
 
@@ -85,11 +85,13 @@ def test_upload_units_idempotent_and_resumable(tmp_path):
     sess = _sess("x", size=f.stat().st_size, path=f)
     s3 = _FakeS3()
     ticks = []
-    up1, sk1 = appmod._upload_units(s3, Src(), [sess], "tester", on_unit=lambda n: ticks.append(n))
-    assert len(up1) == 1 and sk1 == 0
-    up2, sk2 = appmod._upload_units(s3, Src(), [sess], "tester")
-    assert up2 == [] and sk2 == 1          # second run skips (resumable)
-    assert sum(ticks) == 1 and len(s3.objs) == 1
+    up1 = appmod._upload_units(s3, Src(), [sess], "tester", on_unit=lambda n: ticks.append(n))
+    assert len(up1) == 1
+    key1 = up1[0]["s3_key"]
+    up2 = appmod._upload_units(s3, Src(), [sess], "tester")
+    assert len(up2) == 1 and up2[0]["s3_key"] == key1   # deterministic key -> overwrite in place
+    assert len(s3.objs) == 1                            # re-run overwrites, no duplicate
+    assert sum(ticks) == 1
 
 
 def test_upload_job_endpoints():

@@ -72,11 +72,11 @@ use it when bulk upload without per-session review is intended.
 
 ## Storage layout
 
-Uploads are split into **size-budgeted, resumable units** (one working-dir group
-per unit; a group over `CTC_UNIT_BYTES`, default 25 MB, is split into parts of
-whole sessions — transcripts are never split). Each unit is one zip with a
-**content-addressed key**, so re-running an interrupted upload skips units already
-in S3 and finishes the rest:
+Uploads are split into **size-budgeted units** (one working-dir group per unit; a
+group over `CTC_UNIT_BYTES`, default 25 MB, is split into parts of whole sessions
+— transcripts are never split). Each unit is one zip with a **deterministic key**,
+so an aborted upload's completed units stay durable in S3 and re-running
+overwrites the same keys in place (idempotent — no duplicates):
 
 ```
 s3://<bucket>/<source>/<contributor>/<group-hash>/part-NNN-<members-hash>.zip
@@ -90,7 +90,8 @@ under `…/<parent>/subagents/`) plus a `manifest.json` recording `source`,
 
 Uploads run as a **background job** on the local server, so closing the browser
 tab doesn't abort them — reopening the page re-attaches to the in-progress job.
-(The job still ends if the tool's process is stopped; just re-run to resume.)
+(The job still ends if the tool's process is stopped; just re-run it — completed
+units are overwritten in place, not duplicated.)
 
 ## Configuration
 

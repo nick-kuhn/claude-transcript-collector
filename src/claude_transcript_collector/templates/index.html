@@ -467,7 +467,6 @@ function finishToast(j) {
   const bytes = j.uploads.reduce((a, u) => a + u.zip_size_bytes, 0);
   const red = j.uploads.reduce((a, u) => a + u.total_redactions, 0);
   let msg = `Uploaded ${sessions} sessions in ${up} part${up !== 1 ? 's' : ''} (${humanSize(bytes)}, ${red} redactions)`;
-  if (j.skipped) msg += `, ${j.skipped} already present`;
   if (failed) msg += ` — ${failed} failed`;
   showToast(msg, failed > 0);
 }

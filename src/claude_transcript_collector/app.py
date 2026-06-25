@@ -107,16 +107,9 @@ async def preview_session(source: str, group: str, session: str, parent: str = "
 
 
 # Per-unit byte budget: caps each upload object so an abort loses at most one
-# small object and a re-run resumes by skipping units already in S3.
+# small object. Keys are deterministic, so completed units stay durable and a
+# re-run overwrites them in place (idempotent — no duplicates).
 UNIT_BYTES = int(os.environ.get("CTC_UNIT_BYTES", str(25 * 1024 * 1024)))
-
-
-def _exists(s3, key):
-    try:
-        s3.head_object(Bucket=S3_BUCKET, Key=key)
-        return True
-    except Exception:
-        return False
 
 
 def _group_token(group_key):
@@ -203,26 +196,24 @@ def _build_unit_zip(source, unit_sessions, contributor, redact_id=True):
 
 
 def _upload_units(s3, source, sessions, contributor, redact_id=True, on_unit=None):
-    """Upload a source's sessions as size-budgeted, resumable units.
+    """Upload a source's sessions as size-budgeted units.
 
-    Skips units already present in S3 (head_object) so re-runs resume. Returns
-    (uploaded_results, skipped_count). on_unit(n_sessions) ticks progress.
+    Keys are deterministic, so a re-run overwrites the same objects in place
+    (idempotent — no duplicates) and an aborted run's completed units stay
+    durable. The uploader key needs only s3:PutObject. on_unit(n) ticks progress.
     """
-    uploaded, skipped = [], 0
+    uploaded = []
     for group_key, part, unit in _plan_units(sessions):
         key = _unit_key(source, contributor, group_key, part, unit)
-        if _exists(s3, key):
-            skipped += 1
-        else:
-            zip_bytes, man = _build_unit_zip(source, unit, contributor, redact_id)
-            s3.put_object(Bucket=S3_BUCKET, Key=key, Body=zip_bytes,
-                          ContentType="application/zip")
-            uploaded.append({"source": source.id, "s3_key": key,
-                             "session_count": len(unit), "zip_size_bytes": len(zip_bytes),
-                             "total_redactions": man["total_redactions"]})
+        zip_bytes, man = _build_unit_zip(source, unit, contributor, redact_id)
+        s3.put_object(Bucket=S3_BUCKET, Key=key, Body=zip_bytes,
+                      ContentType="application/zip")
+        uploaded.append({"source": source.id, "s3_key": key,
+                         "session_count": len(unit), "zip_size_bytes": len(zip_bytes),
+                         "total_redactions": man["total_redactions"]})
         if on_unit:
             on_unit(len(unit))
-    return uploaded, skipped
+    return uploaded
 
 
 # --- background upload jobs (so closing the tab can't abort an upload) ---
@@ -265,18 +256,20 @@ def _run_upload_job(job_id, selected, contributor, redact_id):
         s3 = _make_s3_client()
         for source, sessions in to_upload:
             try:
-                uploaded, skipped = _upload_units(
+                uploaded = _upload_units(
                     s3, source, sessions, contributor, redact_id,
                     on_unit=lambda n: job.__setitem__("done", job["done"] + n))
-                job["uploads"].extend(uploaded)
-                job["skipped"] += skipped
+                with JOBS_LOCK:
+                    job["uploads"].extend(uploaded)
             except Exception as e:
-                job["errors"].append({"source": source.id, "error": f"{type(e).__name__}: {e}"})
+                with JOBS_LOCK:
+                    job["errors"].append({"source": source.id, "error": f"{type(e).__name__}: {e}"})
         job["status"] = ("completed" if not job["errors"]
                          else "partial" if job["uploads"] else "failed")
     except Exception as e:
+        with JOBS_LOCK:
+            job["errors"].append({"error": f"{type(e).__name__}: {e}"})
         job["status"] = "failed"
-        job["errors"].append({"error": f"{type(e).__name__}: {e}"})
     finally:
         job["finished_at"] = time.time()
         with JOBS_LOCK:
@@ -298,10 +291,14 @@ async def upload(request: Request):
         if _active_job["id"] is not None:
             return JSONResponse({"error": "An upload is already running",
                                  "job_id": _active_job["id"]}, status_code=409)
+        # Bound memory: drop oldest finished jobs, keep the most recent few.
+        finished = [jid for jid, j in JOBS.items() if j["finished_at"] is not None]
+        for jid in finished[:-10]:
+            JOBS.pop(jid, None)
         job_id = uuid.uuid4().hex[:12]
         _active_job["id"] = job_id
         JOBS[job_id] = {"status": "preparing", "total": None, "done": 0,
-                        "skipped": 0, "errors": [], "uploads": [],
+                        "errors": [], "uploads": [],
                         "started_at": time.time(), "finished_at": None}
 
     threading.Thread(target=_run_upload_job,
@@ -314,7 +311,11 @@ async def upload_status(job_id: str):
     job = JOBS.get(job_id)
     if job is None:
         return JSONResponse({"error": "Unknown job"}, status_code=404)
-    return job
+    with JOBS_LOCK:                       # snapshot — the worker mutates lists concurrently
+        snap = dict(job)
+        snap["uploads"] = list(job["uploads"])
+        snap["errors"] = list(job["errors"])
+    return snap
 
 
 def headless_upload(contributor_name: str = "anonymous"):
@@ -330,14 +331,14 @@ def headless_upload(contributor_name: str = "anonymous"):
         any_found = True
         print(f"[{source.label}] uploading {len(sessions)} sessions as units...")
         try:
-            uploaded, skipped = _upload_units(s3, source, sessions, contributor)
+            uploaded = _upload_units(s3, source, sessions, contributor)
         except Exception as e:
             print(f"[{source.label}] upload failed: {type(e).__name__}: {e}")
             continue
         mb = sum(u["zip_size_bytes"] for u in uploaded) / 1024 / 1024
         red = sum(u["total_redactions"] for u in uploaded)
         print(f"[{source.label}] {len(uploaded)} unit(s) uploaded "
-              f"({mb:.1f} MB, {red} redactions), {skipped} already present.")
+              f"({mb:.1f} MB, {red} redactions).")
 
     print("No transcripts found." if not any_found else "Done!")
 
